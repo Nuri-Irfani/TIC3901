@@ -164,10 +164,11 @@ def pcap_IPlist(file_name):
         wsheet.write_row(row, 0, tableHeader, bold)
         row += 1
         
-        for key in flagchk.keys():
-            wsheet.write(row, 0, key)
-            wsheet.write_row(row, 1, flagchk[key])
-            row += 1
+        for i in tqdm(range(100)):
+            for key in flagchk.keys():
+                wsheet.write(row, 0, key)
+                wsheet.write_row(row, 1, flagchk[key])
+                row += 1
             
         wbook.close()
        
