@@ -1,5 +1,5 @@
 import argparse, os, sys, socket, datetime
-import dpkt, pyshark
+import dpkt, pprint
 from collections import defaultdict
 from dpkt.compat import compat_ord
 from scapy.utils import RawPcapReader
@@ -18,16 +18,9 @@ from tqdm import tqdm
 def mac_addr(address):
     return ':'.join('%02x' % compat_ord(b) for b in address)
 
-
-# for sorting. Return negative if ip1 < ip2, 
-# 0 if they are equal, positive if ip1 > ip2.
-###########################################################
-def compare_IPs(ip1, ip2):
-    return sum(map(int, ip1.split('.'))) - sum(map(int, ip2.split('.')))
-
     
 
-# Set flags in TCP packet
+# Use dpkt to check what flags are set in a packet, then pass into a list
 ###########################################################
 def tcpFlags(tcp):
     ret = list()
@@ -61,7 +54,9 @@ def pcap_IPlist(file_name):
     #pass to dpkt's reader
     pcap = dpkt.pcap.Reader(file_name)
     
-    flagchk = defaultdict(list) # Dictionary of suspects. suspect's IP: {# SYNs, # SYN-ACKs}
+    # Dictionary to store key:IP and value:flags
+    # KEY: IP   VALUE: SYN, RST, FIN, PSH, ACK, URG, ECE, CWR
+    flagchk = defaultdict(list)
 
     print('processing packets...')
     
@@ -84,8 +79,10 @@ def pcap_IPlist(file_name):
             if type(tcp) != dpkt.tcp.TCP:
                 continue
 
-            #get flags that are set in the packet
+            #get list flags that are set in the packet
             tcpFlag = tcpFlags(tcp)
+            #check if flags are set in the list
+            #print(tcpFlag) 
 
 
             #convert IP addresses into string format.
@@ -98,29 +95,52 @@ def pcap_IPlist(file_name):
             more_fragments = bool(ip.off & dpkt.ip.IP_MF)
             fragment_offset = ip.off & dpkt.ip.IP_OFFMASK
             
+            
             # put each IP and its list of set flags in a dictionary
             # dictionary structure: 
             # KEY: IP   VALUE: SYN, RST, FIN, PSH, ACK, URG, ECE, CWR
-            for flags in tcpFlag:
-                if flags == 'SYN':
-                    if src not in flagchk:
-                        flagchk[src] = {'SYN': 0, 'SYN-ACK': 0}
-                    flagchk[src]['SYN'] += 1
-                if flags == ('SYN','ACK'):
-                    if dst not in flagchk:
-                        flagchk[dst] = {'SYN': 0, 'SYN-ACK':0}
-                    flagchk[src]['SYN-ACK'] += 1
+            if src not in flagchk.keys():
+                flagchk[src] = [0, 0, 0, 0, 0, 0, 0, 0]
+
+            if 'SYN' in tcpFlag:
+                flagchk[src][0] += 1
+            if 'RST' in tcpFlag:
+                flagchk[src][1] += 1
+            if 'FIN' in tcpFlag:
+                flagchk[src][2] += 1
+            if 'PSH' in tcpFlag:
+                flagchk[src][3] += 1
+            if 'ACK' in tcpFlag:
+                flagchk[src][4] += 1
+            if 'URG' in tcpFlag:
+                flagchk[src][5] += 1
+            if 'ECE' in tcpFlag:
+                flagchk[src][6] += 1
+            if 'CWR' in tcpFlag:
+                flagchk[src][7] += 1
+                    
+            #check if it's updating the dictionary
+            #print(flagchk[src])
 
         except:
             pass
             
     
     print('writing to txt file...')
-    sorted_flagchk = flagchk.items(),key=lambda
     for i in tqdm(range(100)):
         with open('output.txt', 'a+') as f:
-            for key, value in flagchk.items():
-                print("{a} has {b} \n".format(a=key, b=value), file=f)
+            
+            #using prettyprint module to print dictionary into a table
+            print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'),file=f)
+            for k,v in flagchk.items():
+                SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
+                print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR),file=f)
+       
+         
+                ### print checks ###
+                #-------------------#
+                #print("{a} : SYN = {b}, RST = {c}, FIN = {d}, PSH = {e}, ACK = {f}, URG = {g}, ECE = {h}, CWR = {i} \n".format(a=key, b=value[0], c=value[1], d=value[2], e=value[3], f=value[4], g=value[5], h=value[6], i=value[7]), file=f)
+                #print("{a} has {b} \n".format(a=key, b=value), file=f)
                 #print('\nTimestamp: ', str(datetime.datetime.utcfromtimestamp(timestamp)), file=f)
                 #print('Ethernet Frame: ', mac_addr(eth.src), mac_addr(eth.dst), eth.type, file=f)
                 #print('IP: %s -> %s   (len=%d ttl=%d DF=%d MF=%d offset=%d)' % (src, dst, ip.len, ip.ttl, do_not_fragment, more_fragments, fragment_offset), file=f)
