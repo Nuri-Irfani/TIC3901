@@ -1,5 +1,5 @@
 import argparse, os, sys, socket, datetime
-import dpkt, pprint
+import dpkt, pprint, xlsxwriter
 from collections import defaultdict
 from dpkt.compat import compat_ord
 from scapy.utils import RawPcapReader
@@ -119,26 +119,61 @@ def pcap_IPlist(file_name):
             if 'CWR' in tcpFlag:
                 flagchk[src][7] += 1
                     
-            #check if it's updating the dictionary
+        ### print checks ###
+        #-------------------#
             #print(flagchk[src])
 
         except:
             pass
+     
+    
+### print checks ###
+#-------------------#
+    #print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'))
+    #for k,v in flagchk.items():
+                    #SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
+                    #print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR))
             
     
-    print('writing to txt file...')
-    for i in tqdm(range(100)):
-        with open('output.txt', 'a+') as f:
+    userIn = input('''Enter num:
+    [1] To print to txt file
+    [2] To print to excel \n''')
+    
+    if int(userIn) == 1:    
+        print('\n writing to txt file...')
+        for i in tqdm(range(100)):
+            with open('output.txt', 'a+') as f:
+
+                #using prettyprint module to print dictionary into a table
+                print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'), file=f)
+                for k,v in flagchk.items():
+                    SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
+                    print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR), file=f)
+                    
+    if int(userIn) == 2:
+        wbook = xlsxwriter.Workbook('IPflags.xlsx')
+        wsheet = wbook.add_worksheet()
+        row = 0
+        
+        # styling
+        bold = wbook.add_format({'bold':True})
+        wsheet.set_column('A:A', 20)
+        
+        
+        tableHeader = ['IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR']
+        wsheet.write_row(row, 0, tableHeader, bold)
+        row += 1
+        
+        for key in flagchk.keys():
+            wsheet.write(row, 0, key)
+            wsheet.write_row(row, 1, flagchk[key])
+            row += 1
             
-            #using prettyprint module to print dictionary into a table
-            print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'),file=f)
-            for k,v in flagchk.items():
-                SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
-                print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR),file=f)
+        wbook.close()
        
          
-                ### print checks ###
-                #-------------------#
+            ### print checks ###
+            #-------------------#
                 #print("{a} : SYN = {b}, RST = {c}, FIN = {d}, PSH = {e}, ACK = {f}, URG = {g}, ECE = {h}, CWR = {i} \n".format(a=key, b=value[0], c=value[1], d=value[2], e=value[3], f=value[4], g=value[5], h=value[6], i=value[7]), file=f)
                 #print("{a} has {b} \n".format(a=key, b=value), file=f)
                 #print('\nTimestamp: ', str(datetime.datetime.utcfromtimestamp(timestamp)), file=f)
