@@ -1,0 +1,5 @@
+'''\
+                Timestamp: {a}
+                Ethernet Frame: {b}, {c}, {d}
+                IP: {e} -> {f} (len={g} ttl={h} DF={i} MF={j} offset={k})
+                {10}'''.format(a=str(datetime.datetime.utcfromtimestamp(timestamp), b=mac_addr(eth.src), c=mac_addr(eth.dst), d=eth.type, e=src, f=dst, g=ip.len, h=ip.ttl, i=do_not_fragment, j=more_fragments, k=fragment_offset)
