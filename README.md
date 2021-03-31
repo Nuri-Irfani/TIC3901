@@ -1,6 +1,6 @@
 # Port Scanning Detection
 
-Requires Python 3, uses modules **dpkt, pprint, xlsxwriter and tqdm**.
+Requires Python 3, uses **dpkt**.
 
 Current stage: outputs an excel file containing data on every flag that was set in every tcp packet.
 Next goal: Use the data to identify possible types of port scanning, if any, that was happening.

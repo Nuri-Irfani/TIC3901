@@ -9,6 +9,12 @@ from tqdm import tqdm
 
 
 
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~CONSTANTS~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#Fingerprint IPs that performed 3 or more of the same set of actions
+SRATIO = 3
+ACKRATIO = 10 #fragmented ACK attack may indicate DDOS attack, might require higher number to be considered suspicious.
+
+
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~FUNCTIONS~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
@@ -57,10 +63,14 @@ def pcap_IPlist(file_name):
     # Dictionary to store key:IP and value:flags
     # KEY: IP   VALUE: SYN, RST, FIN, PSH, ACK, URG, ECE, CWR
     flagchk = defaultdict(list)
-
-    print('processing packets...')
+    # Dictionary to store IP information
+    logIP = defaultdict(list)
     
-    for timestamp, buf in pcap:    # iterate through packets
+
+    print('processing packets... \n')
+    
+    # iterate through packets
+    for timestamp, buf in pcap:    
         try:
             #unpack ethernet frame to read data
             try:
@@ -83,6 +93,8 @@ def pcap_IPlist(file_name):
             tcpFlag = tcpFlags(tcp)
             #check if flags are set in the list
             #print(tcpFlag) 
+            
+            tmstmp = str(datetime.datetime.utcfromtimestamp(timestamp))
 
 
             #convert IP addresses into string format.
@@ -96,28 +108,37 @@ def pcap_IPlist(file_name):
             fragment_offset = ip.off & dpkt.ip.IP_OFFMASK
             
             
-            # put each IP and its list of set flags in a dictionary
+            # Store all IP and its info uniquely in logIP.
+            if ( (src not in logIP.keys()) and (dst not in logIP.values()) ):
+                logIP[src] = [ dst, ip.len, ip.ttl, mac_addr(eth.src), mac_addr(eth.dst), eth.type ]
+            
+            
+            # put each IP and its list of set flags in another dictionary, 
             # dictionary structure: 
             # KEY: IP   VALUE: SYN, RST, FIN, PSH, ACK, URG, ECE, CWR
-            if src not in flagchk.keys():
-                flagchk[src] = [0, 0, 0, 0, 0, 0, 0, 0]
+            if ( (src not in flagchk.keys()) and (dst not in flagchk.values()) ):
+                flagchk[src] = [dst, 0, 0, 0, 0, 0, 0, 0, 0]
+                
 
             if 'SYN' in tcpFlag:
-                flagchk[src][0] += 1
-            if 'RST' in tcpFlag:
                 flagchk[src][1] += 1
-            if 'FIN' in tcpFlag:
+            if 'RST' in tcpFlag:
                 flagchk[src][2] += 1
-            if 'PSH' in tcpFlag:
+            if 'FIN' in tcpFlag:
                 flagchk[src][3] += 1
-            if 'ACK' in tcpFlag:
+            if 'PSH' in tcpFlag:
                 flagchk[src][4] += 1
-            if 'URG' in tcpFlag:
+            if 'ACK' in tcpFlag:
                 flagchk[src][5] += 1
-            if 'ECE' in tcpFlag:
+            if 'URG' in tcpFlag:
                 flagchk[src][6] += 1
-            if 'CWR' in tcpFlag:
+            if 'ECE' in tcpFlag:
                 flagchk[src][7] += 1
+            if 'CWR' in tcpFlag:
+                flagchk[src][8] += 1
+                
+                
+            
                     
         ### print checks ###
         #-------------------#
@@ -129,48 +150,135 @@ def pcap_IPlist(file_name):
     
 ### print checks ###
 #-------------------#
-    #print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'))
-    #for k,v in flagchk.items():
-                    #SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
-                    #print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR))
+
+    print('Fingerprinting suspects... \n')
+    for (src,v) in flagchk.items():
+        # check for flag combinations and fingerprint them if more than 3 counts
+        # SYN scans: SYN or SYN+RST
+        if ( (flagchk[src][1] >= SRATIO) or (flagchk[src][1]>= SRATIO and flagchk[src][2]>= SRATIO) ):
+            #flagchk[src][9] = 'SYN'
+            flagchk[src].extend(['SYN'])
+
+        # X-MAS scans: URG+PSH+ACK. Assume suspicious even if count is 1
+        elif ( (flagchk[src][4]>= 1) and (flagchk[src][5]>= 1) and (flagchk[src][6] >= 1) ):
+            #flagchk[src][9] = 'X-MAS'
+            flagchk[src].extend(['X-MAS'])
+
+        # Full connect: SYN+ACK || SYN+ACK+RST
+        elif ( ((flagchk[src][1]>= SRATIO) and (flagchk[src][5]>= SRATIO)) or 
+               ((flagchk[src][1]>= SRATIO) and (flagchk[src][2]>= SRATIO) and (flagchk[src][5]>= SRATIO)) ):
+            #flagchk[src][9] = 'FULL_CONNECT'
+            flagchk[src].extend(['FULL-CONNECT'])
+        
+        #Fragmented ACK attack: ACK || PSH+ACK
+        elif ( (flagchk[src][4]>= ACKRATIO) or ((flagchk[src][4]>= ACKRATIO) and (flagchk[src][5]>= ACKRATIO)) ):
+            #flagchk[src][9] = 'Frag-ACK'
+            flagchk[src].extend(['Frag-ACK'])
+
+        # if no flags are set, NULL
+        elif ( (flagchk[src][1] == 0) and (flagchk[src][2] == 0) and (flagchk[src][3] == 0) and (flagchk[src][4] == 0) and 
+             (flagchk[src][5] == 0) and (flagchk[src][6] == 0) and (flagchk[src][7] == 0) and (flagchk[src][8] == 0) ):
+            #flagchk[src][9] = 'NULL'
+            flagchk[src].extend(['NULL'])
+
+        # if all flags are set, fingerprint also. assume suspicious even if count is 1
+        elif ( (flagchk[src][1] >= 1) and (flagchk[src][2] >= 1) and (flagchk[src][3] >= 1) and (flagchk[src][4] >= 1) and 
+             (flagchk[src][5] >= 1) and (flagchk[src][6] >= 1) and (flagchk[src][7] >= 1) and (flagchk[src][8] >= 1) ):
+            #flagchk[src][9] = 'ALL_FLAG'
+            flagchk[src].extend(['ALL_FLAG'])
+            
+        else:
+            flagchk[src].extend(['-'])
+            
+
+    ### print checks ###
+    #-------------------#            
+    #for (k,v) in flagchk.items():
+    #   print (k,v)
+    
+    #for (k,v) in logIP.items():
+    #   print (k,v)
+    
+    #print("{:<20} {:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<15} \n".format('Source', 'Destination', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR', 'SCAN_TYPE'))
+    #for (k,v) in flagchk.items():
+    #   DST, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR, SCANTYPE = v
+    #   print("{:<20} {:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<15}".format(k, DST, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR, SCANTYPE))
+    
+    #logIP[src] = [ dst, ip.len, ip.ttl, mac_addr(eth.src), mac_addr(eth.dst), eth.type ]
+    #-------------------#
             
     
     userIn = input('''Enter num:
     [1] To print to txt file
-    [2] To print to excel \n''')
+    [2] To print to excel 
+    [3] To exit \n''')
     
     if int(userIn) == 1:    
         print('\n writing to txt file...')
+        
+        # show visual display of a progress bar using the tqdm module
         for i in tqdm(range(100)):
-            with open('output.txt', 'a+') as f:
+            
+            with open('ScanLog.txt', 'a+') as f:
 
                 #using prettyprint module to print dictionary into a table
-                print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} \n".format('IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR'), file=f)
-                for k,v in flagchk.items():
-                    SYN, RST, FIN, PSH, ACK, URG, ECE, CWR = v
-                    print("{:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8}".format(k, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR), file=f)
+                print("{:<20} {:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<15} \n".format('Source', 'Destination', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR', 'SCAN_TYPE'), file=f)
+                for (k,v) in flagchk.items():
+                    DST, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR, SCANTYPE = v
+                    print("{:<20} {:<20} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<8} {:<15}".format(k, DST, SYN, RST, FIN, PSH, ACK, URG, ECE, CWR, SCANTYPE), file=f)
+            
+            with open('IPLog.txt', 'a+') as s:
+                print("{:<20} {:<20} {:<8} {:<8} {:<20} {:<20} {:<8} \n".format('Source', 'Destination', 'ipLen', 'TTL', 'MAC_src', 'MAC_dst', 'ETH_type'), file=s)
+                for (k,v) in logIP.items():
+                    DEST, IPLEN, TTL, MACSRC, MACDST, ETHTYPE = v
+                    print("{:<20} {:<20} {:<8} {:<8} {:<20} {:<20} {:<8}".format(k, DEST, IPLEN, TTL, MACSRC, MACDST, ETHTYPE), file=s)
+                    
+        print('Done!')
+            
                     
     if int(userIn) == 2:
         wbook = xlsxwriter.Workbook('IPflags.xlsx')
-        wsheet = wbook.add_worksheet()
-        row = 0
+        sheet1 = wbook.add_worksheet('scanLog')
+        sheet2 = wbook.add_worksheet('ipLog')
+        row1 = 0
+        row2 = 0
         
         # styling
         bold = wbook.add_format({'bold':True})
-        wsheet.set_column('A:A', 20)
+        sheet1.set_column('A:A', 20)
+        sheet1.set_column('B:B', 20)
+        sheet2.set_column('A:A', 20)
+        sheet2.set_column('B:B', 20)
+        sheet2.set_column('E:E', 20)
+        sheet2.set_column('F:F', 20)
         
         
-        tableHeader = ['IP Address', 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR']
-        wsheet.write_row(row, 0, tableHeader, bold)
-        row += 1
+        tableHeader = ['Source', 'Destination' 'SYN', 'RST', 'FIN', 'PSH', 'ACK', 'URG', 'ECE', 'CWR', 'SCAN_TYPE']
+        sheet1.write_row(row1, 0, tableHeader, bold)
+        row1 += 1
         
+        tableHeader = ['Source', 'Destination', 'ipLen', 'TTL', 'MAC_src', 'MAC_dst', 'ETH_type']
+        sheet2.write_row(row2, 0, tableHeader, bold)
+        row2 += 1
+        
+        # show visual display of a progress bar using the tqdm module
         for i in tqdm(range(100)):
             for key in flagchk.keys():
-                wsheet.write(row, 0, key)
-                wsheet.write_row(row, 1, flagchk[key])
-                row += 1
+                sheet1.write(row1, 0, key)
+                sheet1.write_row(row1, 1, flagchk[key])
+                row1 += 1
+                
+            for k in logIP.keys():
+                sheet2.write(row2, 0, k)
+                sheet2.write_row(row2, 1, logIP[k])
+                row2 += 1
             
         wbook.close()
+        
+        print('Done!')
+        
+    if int(userIn) == 3:
+        sys.exit(0)
        
          
             ### print checks ###
@@ -181,6 +289,7 @@ def pcap_IPlist(file_name):
                 #print('Ethernet Frame: ', mac_addr(eth.src), mac_addr(eth.dst), eth.type, file=f)
                 #print('IP: %s -> %s   (len=%d ttl=%d DF=%d MF=%d offset=%d)' % (src, dst, ip.len, ip.ttl, do_not_fragment, more_fragments, fragment_offset), file=f)
                 #print (tcpFlag, file=f)
+            #-------------------#
 
 
 
